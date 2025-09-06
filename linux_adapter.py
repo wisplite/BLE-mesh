@@ -166,11 +166,11 @@ async def send_packet(packet):
         
         @dbus_property(access=PropertyAccess.READ)
         def MinInterval(self) -> "q":  # type: ignore[valid-type]
-            return 200
+            return 160
         
         @dbus_property(access=PropertyAccess.READ)
         def MaxInterval(self) -> "q":  # type: ignore[valid-type]
-            return 250
+            return 200
         
         @dbus_property(access=PropertyAccess.READ)
         def IncludeTxPower(self) -> "b":  # type: ignore[valid-type]
@@ -194,7 +194,7 @@ async def send_packet(packet):
 
     await adapter_props.call_set("org.bluez.Adapter1", "Powered", Variant("b", True))
     await ad_manager.call_register_advertisement(path, {})
-    await asyncio.sleep(5)
+    await asyncio.sleep(10)
     await ad_manager.call_unregister_advertisement(path)
     print("sending packet")
 
