@@ -10,10 +10,17 @@ async def main():
     if not handle:
         print("No handle found")
         return
-    
-    while True:
-        input_data = input("Enter data to send: ")
-        packet = linux_adapter.make_chat_packet(seqnum=linux_adapter.get_seqnum(), origin_id=linux_adapter.get_origin_id(), msg=input_data)
-        await linux_adapter.send_packet(packet)
+
+    async def input_loop():
+        while True:
+            input_data = await asyncio.to_thread(input, "Enter data to send: ")
+            packet = linux_adapter.make_chat_packet(
+                seqnum=linux_adapter.get_seqnum(),
+                origin_id=linux_adapter.get_origin_id(),
+                msg=input_data,
+            )
+            await linux_adapter.send_packet(packet)
+
+    await input_loop()
 
 asyncio.run(main())

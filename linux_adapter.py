@@ -48,44 +48,72 @@ async def scan_for_mesh(on_device):
 
     await adapter.call_start_discovery()
 
-    seen_addresses = set()
+    last_payload_by_addr = {}
+
+    def emit_if_payload(props):
+        mfg_data = props.get("ManufacturerData")
+        if not (mfg_data and 0xFFFF in mfg_data.value):
+            return
+        data_value = mfg_data.value
+        mfg_bytes = bytes(data_value[0xFFFF].value)
+        addr_v = props.get("Address")
+        name_v = props.get("Name")
+        rssi_v = props.get("RSSI")
+        addr = addr_v.value if addr_v is not None else "<unknown>"
+        name = name_v.value if name_v is not None else "<unknown>"
+        rssi = rssi_v.value if rssi_v is not None else 0
+
+        # Only emit when payload changes to avoid duplicates
+        previous = last_payload_by_addr.get(addr)
+        if previous is not None and previous == mfg_bytes:
+            return
+        last_payload_by_addr[addr] = mfg_bytes
+
+        info = {
+            "address": addr,
+            "name": name,
+            "rssi": rssi,
+            "manufacturer_data_bytes": mfg_bytes,
+            "manufacturer_data_str": None,
+        }
+        try:
+            info["manufacturer_data_str"] = mfg_bytes.decode("utf-8")
+        except Exception:
+            info["manufacturer_data_str"] = None
+
+        try:
+            result = on_device(info)
+            if asyncio.iscoroutine(result):
+                asyncio.create_task(result)
+        except Exception:
+            pass
+
+    async def register_device_listener(path):
+        try:
+            dev_intro = await bus.introspect("org.bluez", path)
+            dev_obj = bus.get_proxy_object("org.bluez", path, dev_intro)
+            dev_props = dev_obj.get_interface("org.freedesktop.DBus.Properties")
+
+            def on_props_changed(interface, changed, invalidated):
+                if interface == "org.bluez.Device1" and "ManufacturerData" in changed:
+                    try:
+                        # Merge changed over current props-like dict shape
+                        merged = {**changed}
+                        # Include Address/Name/RSSI if available to build info
+                        # We cannot easily fetch synchronously here; best effort using changed
+                        emit_if_payload(merged)
+                    except Exception:
+                        pass
+
+            dev_props.on_properties_changed(on_props_changed)
+        except Exception:
+            pass
 
     def on_iface_added(path, interfaces):
         if "org.bluez.Device1" in interfaces:
             props = interfaces["org.bluez.Device1"]
-            mfg_data = props.get("ManufacturerData")
-            if mfg_data and 0xFFFF in mfg_data.value:
-                data_value = mfg_data.value
-                mfg_bytes = bytes(data_value[0xFFFF].value)
-                addr_v = props.get("Address")
-                name_v = props.get("Name")
-                rssi_v = props.get("RSSI")
-                addr = addr_v.value if addr_v is not None else "<unknown>"
-                name = name_v.value if name_v is not None else "<unknown>"
-                rssi = rssi_v.value if rssi_v is not None else 0
-                if addr in seen_addresses:
-                    return
-                seen_addresses.add(addr)
-
-                info = {
-                    "address": addr,
-                    "name": name,
-                    "rssi": rssi,
-                    "manufacturer_data_bytes": mfg_bytes,
-                    "manufacturer_data_str": None,
-                }
-                try:
-                    info["manufacturer_data_str"] = mfg_bytes.decode("utf-8")
-                except Exception:
-                    info["manufacturer_data_str"] = None
-
-                try:
-                    result = on_device(info)
-                    if asyncio.iscoroutine(result):
-                        asyncio.create_task(result)
-                except Exception:
-                    # Swallow callback exceptions to avoid breaking signal handling
-                    pass
+            emit_if_payload(props)
+            asyncio.create_task(register_device_listener(path))
 
     obj_manager.on_interfaces_added(on_iface_added)
 
@@ -152,7 +180,8 @@ async def send_packet(packet):
 
     await adapter_props.call_set("org.bluez.Adapter1", "Powered", Variant("b", True))
     await ad_manager.call_register_advertisement(path, {})
-
+    await asyncio.sleep(1)
+    await ad_manager.call_unregister_advertisement(path)
     print("sending packet")
 
 def make_packet(flags, seqnum, ttl, origin_id, payload_bytes):
