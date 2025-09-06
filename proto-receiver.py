@@ -43,8 +43,10 @@ async def main():
             props = interfaces["org.bluez.Device1"]
             mfg_data = props.get("ManufacturerData")
             if mfg_data and 0xFFFF in mfg_data.value:
-                data = bytes(mfg_data[0xFFFF])
-                print(f"Manufacturer data: {data}")
+                data_value = mfg_data.value
+                data = bytes(data_value[0xFFFF].value)
+                string_data = data.decode("utf-8")
+                print(f"Manufacturer data: {string_data}")
                 addr_v = props.get("Address")
                 name_v = props.get("Name")
                 rssi_v = props.get("RSSI")

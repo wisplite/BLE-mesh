@@ -14,7 +14,7 @@ async def advertise():
 
     # Build manufacturer data payload (4-byte Unix timestamp)
     timestamp = int(time.time())
-    mfg_payload = timestamp.to_bytes(4, "big", signed=False)
+    mfg_payload = "Hello, World!"
 
     class LEAdvertisement(ServiceInterface):
         def __init__(self):
@@ -26,7 +26,7 @@ async def advertise():
 
         @dbus_property(access=PropertyAccess.READ)
         def ManufacturerData(self) -> "a{qv}":  # type: ignore[valid-type]
-            return {0xFFFF: Variant("ay", mfg_payload)}
+            return {0xFFFF: Variant("ay", mfg_payload.encode("utf-8"))}
 
         @method()
         def Release(self) -> None:
