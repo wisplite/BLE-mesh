@@ -48,26 +48,21 @@ async def scan_for_mesh(on_device):
 
     await adapter.call_start_discovery()
 
-    last_payload_by_addr = {}
+    device_state = {}
 
-    def emit_if_payload(props):
+    def maybe_emit(path, props):
         mfg_data = props.get("ManufacturerData")
         if not (mfg_data and 0xFFFF in mfg_data.value):
             return
         data_value = mfg_data.value
         mfg_bytes = bytes(data_value[0xFFFF].value)
+
         addr_v = props.get("Address")
         name_v = props.get("Name")
         rssi_v = props.get("RSSI")
         addr = addr_v.value if addr_v is not None else "<unknown>"
         name = name_v.value if name_v is not None else "<unknown>"
         rssi = rssi_v.value if rssi_v is not None else 0
-
-        # Only emit when payload changes to avoid duplicates
-        previous = last_payload_by_addr.get(addr)
-        if previous is not None and previous == mfg_bytes:
-            return
-        last_payload_by_addr[addr] = mfg_bytes
 
         info = {
             "address": addr,
@@ -95,15 +90,14 @@ async def scan_for_mesh(on_device):
             dev_props = dev_obj.get_interface("org.freedesktop.DBus.Properties")
 
             def on_props_changed(interface, changed, invalidated):
-                if interface == "org.bluez.Device1" and "ManufacturerData" in changed:
-                    try:
-                        # Merge changed over current props-like dict shape
-                        merged = {**changed}
-                        # Include Address/Name/RSSI if available to build info
-                        # We cannot easily fetch synchronously here; best effort using changed
-                        emit_if_payload(merged)
-                    except Exception:
-                        pass
+                if interface != "org.bluez.Device1":
+                    return
+                # Update cached props and emit using merged view
+                snapshot = dict(device_state.get(path, {}))
+                snapshot.update(changed)
+                device_state[path] = snapshot
+                if "ManufacturerData" in changed:
+                    maybe_emit(path, snapshot)
 
             dev_props.on_properties_changed(on_props_changed)
         except Exception:
@@ -112,10 +106,14 @@ async def scan_for_mesh(on_device):
     def on_iface_added(path, interfaces):
         if "org.bluez.Device1" in interfaces:
             props = interfaces["org.bluez.Device1"]
-            emit_if_payload(props)
+            device_state[path] = props
+            maybe_emit(path, props)
             asyncio.create_task(register_device_listener(path))
 
     obj_manager.on_interfaces_added(on_iface_added)
+
+    # Do not subscribe to PropertiesChanged on ObjectManager (unsupported);
+    # each device listener handles its own PropertiesChanged.
 
     managed = await obj_manager.call_get_managed_objects()
     for path, ifaces in managed.items():
