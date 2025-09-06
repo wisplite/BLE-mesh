@@ -42,7 +42,7 @@ async def scan_for_mesh(on_device):
 
     await adapter_props.call_set("org.bluez.Adapter1", "Powered", Variant("b", True))
     try:
-        await adapter.call_set_discovery_filter({"Transport": Variant("s", "le")})
+        await adapter.call_set_discovery_filter({"Transport": Variant("s", "le"), "DuplicateData": Variant("b", True)})
     except Exception:
         pass
 
@@ -159,7 +159,23 @@ async def send_packet(packet):
         @dbus_property(access=PropertyAccess.READ)
         def ManufacturerData(self) -> "a{qv}":  # type: ignore[valid-type]
             return {0xFFFF: Variant("ay", mfg_payload)}
-
+        
+        @dbus_property(access=PropertyAccess.READ)
+        def SecondaryChannel(self) -> "s":  # type: ignore[valid-type]
+            return "1M"
+        
+        @dbus_property(access=PropertyAccess.READ)
+        def MinInterval(self) -> "q":  # type: ignore[valid-type]
+            return 200
+        
+        @dbus_property(access=PropertyAccess.READ)
+        def MaxInterval(self) -> "q":  # type: ignore[valid-type]
+            return 250
+        
+        @dbus_property(access=PropertyAccess.READ)
+        def IncludeTxPower(self) -> "b":  # type: ignore[valid-type]
+            return False
+        
         @method()
         def Release(self) -> None:
             print("Advertisement released")
@@ -178,7 +194,7 @@ async def send_packet(packet):
 
     await adapter_props.call_set("org.bluez.Adapter1", "Powered", Variant("b", True))
     await ad_manager.call_register_advertisement(path, {})
-    await asyncio.sleep(1)
+    await asyncio.sleep(5)
     await ad_manager.call_unregister_advertisement(path)
     print("sending packet")
 
