@@ -10,7 +10,6 @@ file_metadata = {}
 num_packets_received = 0
 
 async def on_device(device):
-    print(f"Device found: {device}")
     selectable_devices[device["address"]] = device
     return
 
@@ -46,10 +45,10 @@ async def main():
             selectable_devices_list[device_num] = device
             device_num += 1
         print("--------------------------------")
-        print("Enter the number of the device you want to select:")
+        print("Enter the number of the device you want to select (0 to refresh):")
         device_num = int(await asyncio.to_thread(input, ""))
         if device_num == 0:
-            break
+            continue
         if device_num in selectable_devices_list:
             print(f"Selected device: {selectable_devices_list[device_num]['address']} ({selectable_devices_list[device_num]['name']})")
             print("Enter the path of the file you want to send:")
