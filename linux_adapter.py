@@ -298,7 +298,11 @@ async def register_gatt_server(write_callback):
 
         @dbus_property(access=PropertyAccess.READ)
         def Flags(self) -> "as":
-            return ["read", "write", "notify"]
+            return ["read", "write"]
+
+        @dbus_property(access=PropertyAccess.READ)
+        def Service(self) -> "o":
+            return "/org/bluez/mesh/service0"
 
         @method()
         def ReadValue(self, options: "a{sv}") -> "ay":
@@ -322,11 +326,39 @@ async def register_gatt_server(write_callback):
         def Primary(self) -> "b":
             return True
 
-    mesh_service = MeshService("/org/bluez/mesh/service0")
-    mesh_characteristic = MeshCharacteristic("/org/bluez/mesh/service0/char0")
+    class Application(ServiceInterface):
+        def __init__(self, path: str, service: MeshService, characteristic: MeshCharacteristic):
+            super().__init__("org.freedesktop.DBus.ObjectManager")
+            self.path = path
+            self._service = service
+            self._characteristic = characteristic
+
+        @method()
+        def GetManagedObjects(self) -> "a{oa{sa{sv}}}":
+            return {
+                self._service.path: {
+                    "org.bluez.GattService1": {
+                        "UUID": Variant("s", MESH_SERVICE_UUID),
+                        "Primary": Variant("b", True),
+                    }
+                },
+                self._characteristic.path: {
+                    "org.bluez.GattCharacteristic1": {
+                        "UUID": Variant("s", MESH_CHARACTERISTIC_UUID),
+                        "Service": Variant("o", self._service.path),
+                        "Flags": Variant("as", ["read", "write"]),
+                    }
+                },
+            }
+
+    app_path = "/org/bluez/mesh"
+    mesh_service = MeshService(f"{app_path}/service0")
+    mesh_characteristic = MeshCharacteristic(f"{app_path}/service0/char0")
+    application = Application(app_path, mesh_service, mesh_characteristic)
 
     bus.export(mesh_service.path, mesh_service)
     bus.export(mesh_characteristic.path, mesh_characteristic)
+    bus.export(app_path, application)
 
     adapter_path = await get_adapter_path(obj_manager)
     if not adapter_path:
@@ -336,9 +368,7 @@ async def register_gatt_server(write_callback):
     gatt_obj = bus.get_proxy_object("org.bluez", adapter_path, gatt_manager)
     gatt_mgr = gatt_obj.get_interface("org.bluez.GattManager1")
 
-    await gatt_mgr.call_register_application(
-        {"org.bluez/mesh": mesh_service.path}, {}
-    )
+    await gatt_mgr.call_register_application(app_path, {})
 
     return mesh_service, mesh_characteristic
 
