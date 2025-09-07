@@ -12,6 +12,13 @@ async def main():
     
     advertise_handle = await linux_adapter.advertise(linux_adapter.make_packet(0x01, linux_adapter.get_seqnum(), 5, linux_adapter.get_origin_id(), b""))
     
+    gatt_service, gatt_characteristic = await linux_adapter.register_gatt_server(lambda data: print(f"Data received: {data.decode('utf-8')}"))
+
+    while True:
+        input = await asyncio.to_thread(input, "Enter data to send: ") 
+        for neighbor in linux_adapter.get_neighbors().values():
+            linux_adapter.send_data(neighbor["address"], input.encode("utf-8"))
+
     await asyncio.get_running_loop().create_future()
 
 asyncio.run(main())
