@@ -412,7 +412,7 @@ async def find_device_path_by_address(obj_manager, device_address):
                 return path
     return None
 
-async def send_data(device_address, data):
+async def send_data(device_address, packets):
     bus, obj_manager = await get_client_bus_and_manager()
     print(f"Sending data to {device_address}")
 
@@ -493,7 +493,9 @@ async def send_data(device_address, data):
                     pass
 
                 char_iface = await find_characteristic(bus, dev_path, MESH_CHARACTERISTIC_UUID)
-                await char_iface.call_write_value(data, {})
+                for packet in packets:
+                    await char_iface.call_write_value(packet, {})
+                    await asyncio.sleep(0.1)
                 print("Data sent to device")
                 last_exc = None
                 break

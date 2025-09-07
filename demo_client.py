@@ -18,7 +18,10 @@ async def main():
     while True:
         input_data = await asyncio.to_thread(input, "Enter data to send: ") 
         for neighbor in linux_adapter.get_neighbors().values():
-            await linux_adapter.send_data(neighbor["address"], input_data.encode("utf-8"))
+            test_data = []
+            for i in range(10):
+                test_data.append((input_data + str(i)).encode("utf-8"))
+            await linux_adapter.send_data(neighbor["address"], test_data)
 
     await asyncio.get_running_loop().create_future()
 
