@@ -379,10 +379,10 @@ async def find_characteristic(bus, dev_path, target_uuid):
 
     # Recursively walk children to find the characteristic with the right UUID
     for node in obj.nodes:
-        service_path = f"{dev_path}/{node}"
+        service_path = f"{dev_path}/{node.name}"
         service_obj = await bus.introspect("org.bluez", service_path)
         for char_node in service_obj.nodes:
-            char_path = f"{service_path}/{char_node}"
+            char_path = f"{service_path}/{char_node.name}"
             char_obj = await bus.introspect("org.bluez", char_path)
             char_iface = bus.get_proxy_object("org.bluez", char_path, char_obj).get_interface("org.bluez.GattCharacteristic1")
 
