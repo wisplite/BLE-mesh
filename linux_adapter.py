@@ -176,7 +176,7 @@ async def advertise(packet):
 
         @dbus_property(access=PropertyAccess.READ)
         def Type(self) -> "s":  # type: ignore[valid-type]
-            return "broadcast"
+            return "peripheral"
 
         @dbus_property(access=PropertyAccess.READ)
         def ManufacturerData(self) -> "a{qv}":  # type: ignore[valid-type]
@@ -395,18 +395,56 @@ async def find_characteristic(bus, dev_path, target_uuid):
 
 async def send_data(device_address, data):
     bus, obj_manager = await init_bus_and_manager()
+    print(f"Sending data to {device_address}")
 
     dev_path = f"/org/bluez/hci0/dev_{device_address.replace(':', '_')}"
+    print(f"Device path: {dev_path}")
     dev_obj = await bus.introspect("org.bluez", dev_path)
     dev = bus.get_proxy_object("org.bluez", dev_path, dev_obj)
     dev_iface = dev.get_interface("org.bluez.Device1")
+    
+    # Stop discovery to avoid connection aborts while scanning
+    adapter_path = await get_adapter_path(obj_manager)
+    if not adapter_path:
+        return
+    adapter_intro = await bus.introspect("org.bluez", adapter_path)
+    adapter_obj = bus.get_proxy_object("org.bluez", adapter_path, adapter_intro)
+    adapter = adapter_obj.get_interface("org.bluez.Adapter1")
 
-    await dev_iface.call_connect()
-    print("Connected to device")
+    try:
+        try:
+            await adapter.call_stop_discovery()
+        except Exception:
+            pass
 
-    char_iface = await find_characteristic(bus, dev_path, MESH_CHARACTERISTIC_UUID)
-    await char_iface.call_write_value(data, {})
-    print("Data sent to device")
+        await dev_iface.call_connect()
+        print("Connected to device")
 
-    await dev_iface.call_disconnect()
-    print("Disconnected from device")
+        # Wait until services are resolved before attempting GATT operations
+        dev_props = dev.get_interface("org.freedesktop.DBus.Properties")
+        try:
+            for _ in range(100):
+                try:
+                    resolved_variant = await dev_props.call_get("org.bluez.Device1", "ServicesResolved")
+                    resolved = resolved_variant.value if isinstance(resolved_variant, Variant) else resolved_variant
+                    if resolved:
+                        break
+                except Exception:
+                    pass
+                await asyncio.sleep(0.1)
+        except Exception:
+            pass
+
+        char_iface = await find_characteristic(bus, dev_path, MESH_CHARACTERISTIC_UUID)
+        await char_iface.call_write_value(data, {})
+        print("Data sent to device")
+    finally:
+        try:
+            await dev_iface.call_disconnect()
+            print("Disconnected from device")
+        except Exception:
+            pass
+        try:
+            await adapter.call_start_discovery()
+        except Exception:
+            pass
