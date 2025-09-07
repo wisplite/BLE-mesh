@@ -10,6 +10,10 @@ devices = {}
 VERSION = 0x01
 ORIGIN_ID_FILE = "origin_id.bin"
 SEQNUM_FILE = "seqnum.bin"
+MESH_SERVICE_UUID = "19f81ab7-e356-4634-97f1-b44e5bb94a74"
+MESH_CHARACTERISTIC_UUID = "328c73ef-46e9-4718-9a1b-0dfd45691782"
+neighbor_table = {}
+known_devices = {}
 
 async def init_bus_and_manager():
     bus = await MessageBus(bus_type=BusType.SYSTEM).connect()
@@ -28,7 +32,13 @@ async def get_adapter_path(obj_manager):
         return None
     return adapter_paths[0]
 
-async def scan_for_mesh(on_device):
+def get_neighbors():
+    return neighbor_table
+
+def get_known_devices():
+    return known_devices
+
+async def scan_for_mesh(on_device, ttl_config=5):
     bus, obj_manager = await init_bus_and_manager()
 
     adapter_path = await get_adapter_path(obj_manager)
@@ -64,17 +74,29 @@ async def scan_for_mesh(on_device):
         name = name_v.value if name_v is not None else "<unknown>"
         rssi = rssi_v.value if rssi_v is not None else 0
 
+        version, flags, seqnum, ttl, origin_id, payload_bytes = parse_packet(mfg_bytes)
+
         info = {
             "address": addr,
             "name": name,
             "rssi": rssi,
-            "manufacturer_data_bytes": mfg_bytes,
-            "manufacturer_data_str": None,
+            "version": version,
+            "flags": flags,
+            "seqnum": seqnum,
+            "ttl": ttl,
+            "origin_id": origin_id,
+            "payload_bytes": payload_bytes,
+            "last_seen": time.time(),
         }
-        try:
-            info["manufacturer_data_str"] = mfg_bytes.decode("utf-8")
-        except Exception:
-            info["manufacturer_data_str"] = None
+
+        if (ttl == ttl_config):
+            neighbor_table[origin_id] = info
+            known_devices[origin_id] = info
+        else:
+            known_devices[origin_id] = info
+            if origin_id in neighbor_table:
+                del neighbor_table[origin_id]
+
 
         try:
             result = on_device(info)
@@ -141,7 +163,7 @@ async def scan_for_mesh(on_device):
 
     return ScanHandle(bus, adapter)
 
-async def send_packet(packet):
+async def advertise(packet):
     bus, obj_manager = await init_bus_and_manager()
 
     path = "/com/example/advertisement0"
@@ -162,7 +184,7 @@ async def send_packet(packet):
         
         @dbus_property(access=PropertyAccess.READ)
         def SecondaryChannel(self) -> "s":  # type: ignore[valid-type]
-            return "1M"
+            return "Coded"
         
         @dbus_property(access=PropertyAccess.READ)
         def MinInterval(self) -> "q":  # type: ignore[valid-type]
@@ -194,9 +216,19 @@ async def send_packet(packet):
 
     await adapter_props.call_set("org.bluez.Adapter1", "Powered", Variant("b", True))
     await ad_manager.call_register_advertisement(path, {})
-    await asyncio.sleep(10)
-    await ad_manager.call_unregister_advertisement(path)
-    print("sending packet")
+    class AdvertiseHandle:
+        def __init__(self, bus, ad_manager):
+            self._bus = bus
+            self._ad_manager = ad_manager
+            self._stopped = False
+            
+        async def stop(self):
+            if self._stopped:
+                return
+            await self._ad_manager.call_unregister_advertisement(path)
+            await self._bus.disconnect()
+            self._stopped = True
+    return AdvertiseHandle(bus, ad_manager)
 
 def make_packet(flags, seqnum, ttl, origin_id, payload_bytes):
     return (
@@ -207,11 +239,6 @@ def make_packet(flags, seqnum, ttl, origin_id, payload_bytes):
         origin_id +
         payload_bytes
     )
-
-def make_chat_packet(seqnum, origin_id, msg, ttl=5):
-    return make_packet(flags=0x01, seqnum=seqnum, ttl=ttl,
-                       origin_id=origin_id,
-                       payload_bytes=msg.encode("utf-8"))
 
 def parse_packet(packet):
     if len(packet) < 6:
@@ -254,3 +281,102 @@ def get_seqnum():
     with open(SEQNUM_FILE, "wb") as f:
         f.write(seqnum.to_bytes(2, "big"))
     return seqnum
+
+async def register_gatt_server(write_callback):
+
+    bus, obj_manager = await init_bus_and_manager()
+
+    class MeshCharacteristic(ServiceInterface):
+        def __init__(self, path):
+            super().__init__("org.bluez.GattCharacteristic1")
+            self.path = path
+            self.value = bytearray()
+        
+        @dbus_property(access=PropertyAccess.READ)
+        def UUID(self) -> "s":
+            return MESH_CHARACTERISTIC_UUID
+
+        @dbus_property(access=PropertyAccess.READ)
+        def Flags(self) -> "as":
+            return ["read", "write", "notify"]
+
+        @method()
+        def ReadValue(self, options: "a{sv}") -> "ay":
+            return self.value
+
+        @method()
+        def WriteValue(self, value: "ay", options: "a{sv}"):
+            self.value = value
+            write_callback(value)
+
+    class MeshService(ServiceInterface):
+        def __init__(self, path):
+            super().__init__("org.bluez.GattService1")
+            self.path = path
+
+        @dbus_property(access=PropertyAccess.READ)
+        def UUID(self) -> "s":
+            return MESH_SERVICE_UUID
+
+        @dbus_property(access=PropertyAccess.READ)
+        def Primary(self) -> "b":
+            return True
+
+    mesh_service = MeshService("/org/bluez/mesh/service0")
+    mesh_characteristic = MeshCharacteristic("/org/bluez/mesh/service0/char0")
+
+    bus.export(mesh_service.path, mesh_service)
+    bus.export(mesh_characteristic.path, mesh_characteristic)
+
+    adapter_path = await get_adapter_path(obj_manager)
+    if not adapter_path:
+        return
+
+    gatt_manager = await bus.introspect("org.bluez", adapter_path)
+    gatt_obj = bus.get_proxy_object("org.bluez", adapter_path, gatt_manager)
+    gatt_mgr = gatt_obj.get_interface("org.bluez.GattManager1")
+
+    await gatt_mgr.call_register_application(
+        {"org.bluez/mesh": mesh_service.path}, {}
+    )
+
+    return mesh_service, mesh_characteristic
+
+async def find_characteristic(bus, dev_path, target_uuid):
+    # Introspect the device object
+    obj = await bus.introspect("org.bluez", dev_path)
+    dev = bus.get_proxy_object("org.bluez", dev_path, obj)
+
+    # Recursively walk children to find the characteristic with the right UUID
+    for node in obj.nodes:
+        service_path = f"{dev_path}/{node}"
+        service_obj = await bus.introspect("org.bluez", service_path)
+        for char_node in service_obj.nodes:
+            char_path = f"{service_path}/{char_node}"
+            char_obj = await bus.introspect("org.bluez", char_path)
+            char_iface = bus.get_proxy_object("org.bluez", char_path, char_obj).get_interface("org.bluez.GattCharacteristic1")
+
+            # Check UUID property
+            uuid = await char_iface.get_uuid()
+            if uuid == target_uuid:
+                return char_iface
+
+    raise Exception("Characteristic not found")
+
+async def send_data(device_address, data):
+    bus, obj_manager = await init_bus_and_manager()
+
+    dev_path = f"/org/bluez/hci0/dev_{device_address.replace(':', '_')}"
+    dev_obj = await bus.introspect("org.bluez", dev_path)
+    dev = bus.get_proxy_object("org.bluez", dev_path, dev_obj)
+    dev_iface = dev.get_interface("org.bluez.Device1")
+
+    await dev_iface.call_connect()
+    print("Connected to device")
+
+    char_iface = await find_characteristic(bus, dev_path, MESH_CHARACTERISTIC_UUID)
+    await char_iface.call_write_value(data, {})
+    print("Data sent to device")
+
+    await dev_iface.call_disconnect()
+    print("Disconnected from device")

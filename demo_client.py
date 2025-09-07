@@ -1,26 +1,17 @@
 import asyncio
 import linux_adapter
+import os
 
 async def on_device(device):
-    print("Message from device: ", device)
-    print("Parsed payload:", linux_adapter.parse_packet(device["manufacturer_data_bytes"]))
+    os.system("clear")
+    print("Neighbors: ", linux_adapter.get_neighbors())
+    print("Known devices: ", linux_adapter.get_known_devices())
 
 async def main():
     handle = await linux_adapter.scan_for_mesh(on_device)
-    if not handle:
-        print("No handle found")
-        return
-
-    async def input_loop():
-        while True:
-            input_data = await asyncio.to_thread(input, "Enter data to send: ")
-            packet = linux_adapter.make_chat_packet(
-                seqnum=linux_adapter.get_seqnum(),
-                origin_id=linux_adapter.get_origin_id(),
-                msg=input_data,
-            )
-            await linux_adapter.send_packet(packet)
-
-    await input_loop()
+    
+    advertise_handle = await linux_adapter.advertise(linux_adapter.make_packet(0x01, linux_adapter.get_seqnum(), 5, linux_adapter.get_origin_id(), b""))
+    
+    await asyncio.get_running_loop().create_future()
 
 asyncio.run(main())
