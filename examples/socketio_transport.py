@@ -2,7 +2,6 @@ import socketio
 import linux_adapter
 import asyncio
 import json
-import threading
 
 sio = socketio.AsyncServer(async_mode="asgi", cors_allowed_origins="*")
 
@@ -19,32 +18,35 @@ class MessageQueue:
     def __init__(self, timeout=5):
         self.timeout = timeout
         self.queue = []
-        self.timer = None
-        self.lock = threading.Lock()
+        self._handle = None
+        self._lock = asyncio.Lock()
+        self._loop = None
 
-    def add_message(self, message):
-        with self.lock:
+    async def add_message(self, message):
+        if self._loop is None:
+            self._loop = asyncio.get_running_loop()
+        async with self._lock:
             self.queue.append(message)
             print(f"Message queued: {message}")
 
-            # Cancel existing timer if running
-            if self.timer:
-                self.timer.cancel()
+            if self._handle is not None and not self._handle.cancelled():
+                self._handle.cancel()
 
-            # Start a new timer
-            self.timer = threading.Timer(self.timeout, lambda: asyncio.create_task(self.flush()))
-            self.timer.start()
+            self._handle = self._loop.call_later(self.timeout, lambda: asyncio.create_task(self.flush()))
 
     async def flush(self):
-        with self.lock:
+        async with self._lock:
             if not self.queue:
                 return
-            print(f"Flushing queue: {self.queue}")
+            messages = list(self.queue)
             self.queue.clear()
-            self.timer = None
-            neighbors = linux_adapter.get_neighbors()
-            for neighbor in neighbors.values():
-                await linux_adapter.send_data(neighbor["address"], [self.queue])
+            self._handle = None
+
+        print(f"Flushing queue: {messages}")
+        packets = [m.encode("utf-8") for m in messages]
+        neighbors = linux_adapter.get_neighbors()
+        for neighbor in neighbors.values():
+            await linux_adapter.send_data(neighbor["address"], packets)
 
 mq = MessageQueue(timeout=5)
 
@@ -97,7 +99,7 @@ async def connect(sid, environ, auth):
 async def send_message(sid, data):
     print(f"Received message: {data}")
     data = json.loads(data)
-    mq.add_message(linux_adapter.get_origin_id().hex() + data["message"])
+    await mq.add_message(linux_adapter.get_origin_id().hex() + data["message"])
 
 
 @sio.event
