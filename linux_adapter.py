@@ -15,6 +15,16 @@ MESH_CHARACTERISTIC_UUID = "328c73ef-46e9-4718-9a1b-0dfd45691782"
 neighbor_table = {}
 known_devices = {}
 
+# Reusable client bus for outbound GATT operations
+_client_bus = None
+_client_obj_manager = None
+
+async def get_client_bus_and_manager():
+    global _client_bus, _client_obj_manager
+    if _client_bus is None or _client_obj_manager is None:
+        _client_bus, _client_obj_manager = await init_bus_and_manager()
+    return _client_bus, _client_obj_manager
+
 async def init_bus_and_manager():
     bus = await MessageBus(bus_type=BusType.SYSTEM).connect()
     print("Connected to system bus")
@@ -182,9 +192,7 @@ async def advertise(packet):
         def ManufacturerData(self) -> "a{qv}":  # type: ignore[valid-type]
             return {0xFFFF: Variant("ay", mfg_payload)}
         
-        @dbus_property(access=PropertyAccess.READ)
-        def SecondaryChannel(self) -> "s":  # type: ignore[valid-type]
-            return "Coded"
+        # Intentionally omit ServiceUUIDs to keep adv payload small
         
         @dbus_property(access=PropertyAccess.READ)
         def MinInterval(self) -> "q":  # type: ignore[valid-type]
@@ -394,7 +402,7 @@ async def find_characteristic(bus, dev_path, target_uuid):
     raise Exception("Characteristic not found")
 
 async def send_data(device_address, data):
-    bus, obj_manager = await init_bus_and_manager()
+    bus, obj_manager = await get_client_bus_and_manager()
     print(f"Sending data to {device_address}")
 
     dev_path = f"/org/bluez/hci0/dev_{device_address.replace(':', '_')}"
@@ -417,31 +425,60 @@ async def send_data(device_address, data):
         except Exception:
             pass
 
-        await dev_iface.call_connect()
-        print("Connected to device")
-
-        # Wait until services are resolved before attempting GATT operations
         dev_props = dev.get_interface("org.freedesktop.DBus.Properties")
-        try:
-            for _ in range(100):
+
+        last_exc = None
+        for attempt in range(1, 4):
+            try:
+                # Connect if not connected
                 try:
-                    resolved_variant = await dev_props.call_get("org.bluez.Device1", "ServicesResolved")
-                    resolved = resolved_variant.value if isinstance(resolved_variant, Variant) else resolved_variant
-                    if resolved:
-                        break
+                    connected_v = await dev_props.call_get("org.bluez.Device1", "Connected")
+                    connected = connected_v.value if isinstance(connected_v, Variant) else connected_v
+                except Exception:
+                    connected = False
+                if not connected:
+                    await dev_iface.call_connect()
+                    print("Connected to device")
+
+                # Wait for services resolved
+                try:
+                    for _ in range(200):
+                        try:
+                            resolved_variant = await dev_props.call_get("org.bluez.Device1", "ServicesResolved")
+                            resolved = resolved_variant.value if isinstance(resolved_variant, Variant) else resolved_variant
+                            if resolved:
+                                break
+                        except Exception:
+                            pass
+                        await asyncio.sleep(0.1)
                 except Exception:
                     pass
-                await asyncio.sleep(0.1)
-        except Exception:
-            pass
 
-        char_iface = await find_characteristic(bus, dev_path, MESH_CHARACTERISTIC_UUID)
-        await char_iface.call_write_value(data, {})
-        print("Data sent to device")
+                char_iface = await find_characteristic(bus, dev_path, MESH_CHARACTERISTIC_UUID)
+                await char_iface.call_write_value(data, {})
+                print("Data sent to device")
+                last_exc = None
+                break
+            except Exception as e:
+                last_exc = e
+                try:
+                    await dev_iface.call_disconnect()
+                except Exception:
+                    pass
+                await asyncio.sleep(0.5 * attempt)
+        if last_exc is not None:
+            raise last_exc
     finally:
         try:
-            await dev_iface.call_disconnect()
-            print("Disconnected from device")
+            # Only disconnect if connected
+            try:
+                connected_v = await dev_props.call_get("org.bluez.Device1", "Connected")
+                connected = connected_v.value if isinstance(connected_v, Variant) else connected_v
+            except Exception:
+                connected = False
+            if connected:
+                await dev_iface.call_disconnect()
+                print("Disconnected from device")
         except Exception:
             pass
         try:
