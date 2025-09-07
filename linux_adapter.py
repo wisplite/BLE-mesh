@@ -424,7 +424,6 @@ async def send_data(device_address, packets):
     try:
         dev_iface = dev.get_interface("org.bluez.Device1")
     except Exception:
-        del neighbor_table[device_address]
         return
     
     # Stop discovery to avoid connection aborts while scanning
