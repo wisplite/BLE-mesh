@@ -14,7 +14,6 @@ async def on_device(device):
     return
 
 async def on_data(data):
-    print(f"Data received: {data.decode('utf-8')}")
     if data['t'] == 'b64data':
         file_data = b""
         file_metadata = json.loads(data.decode("utf-8"))
