@@ -31,7 +31,7 @@ async def on_data(data):
 async def main():
     await linux_adapter.scan_for_mesh(on_device)
     await linux_adapter.advertise(linux_adapter.make_packet(0x01, linux_adapter.get_seqnum(), 5, linux_adapter.get_origin_id(), b""))
-    gatt_service, gatt_characteristic = await linux_adapter.register_gatt_server(lambda data: print(f"Data received: {data.decode('utf-8')}"))
+    gatt_service, gatt_characteristic = await linux_adapter.register_gatt_server(on_data)
 
     while True:
         os.system("clear")
