@@ -2,6 +2,7 @@ import socketio
 import linux_adapter
 import asyncio
 import json
+import threading
 
 sio = socketio.AsyncServer(async_mode="asgi", cors_allowed_origins="*")
 
@@ -31,10 +32,10 @@ class MessageQueue:
                 self.timer.cancel()
 
             # Start a new timer
-            self.timer = threading.Timer(self.timeout, self.flush)
+            self.timer = threading.Timer(self.timeout, lambda: asyncio.create_task(self.flush()))
             self.timer.start()
 
-    def flush(self):
+    async def flush(self):
         with self.lock:
             if not self.queue:
                 return
