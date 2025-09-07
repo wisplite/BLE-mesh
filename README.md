@@ -2,7 +2,7 @@ This is the working repository for my custom Bluetooth mesh protocol.
 
 This protocol is completely bespoke and does not adhere to any existing standards. It is designed to send messages over an arbitrarily large BLE mesh network via ~BLE 5.0 extended advertising~ GATT.
 
-I am building this because I have yet to see any simple BLE Mesh SDK other than Bridgefy, which is proprietary, has a terrible licensing scheme, and completely opaque pricing. This project is open-source, and will always be open-source. I see no reason to make a communication protocol proprietary.
+I am building this because I have yet to see any simple BLE Mesh SDK other than Bridgefy, which is proprietary and paid. This project is open-source, and will always be open-source. I see no reason to make a communication protocol proprietary.
 
 Current state:
 Basic communication between two devices is working. You can run proto-send.py and proto-receiver.py to see it in action.
