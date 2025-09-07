@@ -14,6 +14,39 @@ app = socketio.ASGIApp(
 scan_handle = None
 advertise_handle = None
 
+class MessageQueue:
+    def __init__(self, timeout=5):
+        self.timeout = timeout
+        self.queue = []
+        self.timer = None
+        self.lock = threading.Lock()
+
+    def add_message(self, message):
+        with self.lock:
+            self.queue.append(message)
+            print(f"Message queued: {message}")
+
+            # Cancel existing timer if running
+            if self.timer:
+                self.timer.cancel()
+
+            # Start a new timer
+            self.timer = threading.Timer(self.timeout, self.flush)
+            self.timer.start()
+
+    def flush(self):
+        with self.lock:
+            if not self.queue:
+                return
+            print(f"Flushing queue: {self.queue}")
+            self.queue.clear()
+            self.timer = None
+            neighbors = linux_adapter.get_neighbors()
+            for neighbor in neighbors.values():
+                await linux_adapter.send_data(neighbor["address"], [self.queue])
+
+mq = MessageQueue(timeout=5)
+
 async def bluetooth_setup():
     global scan_handle, advertise_handle
     scan_handle = await linux_adapter.scan_for_mesh(on_device)
@@ -63,9 +96,8 @@ async def connect(sid, environ, auth):
 async def send_message(sid, data):
     print(f"Received message: {data}")
     data = json.loads(data)
-    neighbors = linux_adapter.get_neighbors()
-    for neighbor in neighbors.values():
-        await linux_adapter.send_data(neighbor["address"], [f"{linux_adapter.get_origin_id().hex()}{data['message']}".encode("utf-8")])
+    mq.add_message(linux_adapter.get_origin_id().hex() + data["message"])
+
 
 @sio.event
 async def disconnect(sid):
