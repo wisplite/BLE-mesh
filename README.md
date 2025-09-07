@@ -21,3 +21,13 @@ TODO:
 Potential future features (currently out of scope):
 - Crypto support for secure communication
 - Rely on service UUID for identifying the protocol, rather than prototype manufacturer data (0xFFFF)
+
+To run any of the examples in this repository, you need to have the dbus-fast library installed. You can install it with pip:
+
+```
+pip install dbus-fast
+```
+
+Then you can run the examples with:
+
+python3 -m examples.demo_name
