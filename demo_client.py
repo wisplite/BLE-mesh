@@ -3,6 +3,7 @@ import linux_adapter
 import os
 
 async def on_device(device):
+    return
     os.system("clear")
     print("Neighbors: ", linux_adapter.get_neighbors())
     print("Known devices: ", linux_adapter.get_known_devices())
@@ -17,7 +18,7 @@ async def main():
     while True:
         input_data = await asyncio.to_thread(input, "Enter data to send: ") 
         for neighbor in linux_adapter.get_neighbors().values():
-            linux_adapter.send_data(neighbor["address"], input_data.encode("utf-8"))
+            await linux_adapter.send_data(neighbor["address"], input_data.encode("utf-8"))
 
     await asyncio.get_running_loop().create_future()
 
