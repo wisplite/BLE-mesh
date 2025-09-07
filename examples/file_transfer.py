@@ -14,10 +14,10 @@ async def on_device(device):
     return
 
 async def on_data(data):
-    print(f"Data received: {data}")
+    print(f"Data received: {data.decode('utf-8')}")
     if data['t'] == 'b64data':
         file_data = b""
-        file_metadata = json.loads(data)
+        file_metadata = json.loads(data.decode("utf-8"))
     elif data['t'] == 'end':
         print("File received")
         with open(f"received_file.{file_metadata['e']}", "w") as f:
@@ -58,15 +58,14 @@ async def main():
                 with open(file_path, "rb") as f:
                     file_data = f.read()
                     base64_data = base64.b64encode(file_data)
-                    print(f"File data: {base64_data}")
                     packets = [{'t':'b64data','e': file_path.split(".")[-1],'c':0}]
                     packet_length_bytes = 192
                     for i in range(0, len(base64_data), packet_length_bytes):
                         packets.append(base64_data[i:i+packet_length_bytes])
                     packets.append({'t':'end'})
                     packets[0]['c'] = len(packets)
-                    packets[0] = json.dumps(packets[0])
-                    packets[-1] = json.dumps(packets[-1])
+                    packets[0] = json.dumps(packets[0]).encode("utf-8")
+                    packets[-1] = json.dumps(packets[-1]).encode("utf-8")
                     await linux_adapter.send_data(selectable_devices_list[device_num]["address"], packets)
             else:
                 print("File does not exist")
