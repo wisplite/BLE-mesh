@@ -2,6 +2,7 @@ import asyncio
 from dbus_fast.aio import MessageBus
 from dbus_fast import BusType, Variant
 from dbus_fast.service import ServiceInterface, dbus_property, method, PropertyAccess
+from dbus_fast.errors import DBusError
 import os
 import uuid
 import time
@@ -401,15 +402,30 @@ async def find_characteristic(bus, dev_path, target_uuid):
 
     raise Exception("Characteristic not found")
 
+async def find_device_path_by_address(obj_manager, device_address):
+    managed = await obj_manager.call_get_managed_objects()
+    for path, ifaces in managed.items():
+        if "org.bluez.Device1" in ifaces:
+            props = ifaces["org.bluez.Device1"]
+            addr_variant = props.get("Address")
+            if addr_variant and getattr(addr_variant, "value", None) == device_address:
+                return path
+    return None
+
 async def send_data(device_address, data):
     bus, obj_manager = await get_client_bus_and_manager()
     print(f"Sending data to {device_address}")
 
-    dev_path = f"/org/bluez/hci0/dev_{device_address.replace(':', '_')}"
+    resolved_path = await find_device_path_by_address(obj_manager, device_address)
+    dev_path = resolved_path if resolved_path else f"/org/bluez/hci0/dev_{device_address.replace(':', '_')}"
     print(f"Device path: {dev_path}")
     dev_obj = await bus.introspect("org.bluez", dev_path)
     dev = bus.get_proxy_object("org.bluez", dev_path, dev_obj)
-    dev_iface = dev.get_interface("org.bluez.Device1")
+    try:
+        dev_iface = dev.get_interface("org.bluez.Device1")
+    except Exception:
+        del neighbor_table[device_address]
+        return
     
     # Stop discovery to avoid connection aborts while scanning
     adapter_path = await get_adapter_path(obj_manager)
@@ -437,8 +453,30 @@ async def send_data(device_address, data):
                 except Exception:
                     connected = False
                 if not connected:
-                    await dev_iface.call_connect()
-                    print("Connected to device")
+                    try:
+                        await dev_iface.call_connect()
+                        print("Connected to device")
+                    except Exception as e:
+                        # If the Device1 interface temporarily disappeared (racy BlueZ), re-resolve path and retry once
+                        error_text = str(e)
+                        is_unknown_method = isinstance(e, DBusError) and (getattr(e, "name", "").endswith("UnknownMethod") or "UnknownMethod" in error_text or "doesn't exist" in error_text)
+                        if is_unknown_method:
+                            try:
+                                new_path = await find_device_path_by_address(obj_manager, device_address)
+                                if new_path:
+                                    dev_path = new_path
+                                    dev_obj = await bus.introspect("org.bluez", dev_path)
+                                    dev = bus.get_proxy_object("org.bluez", dev_path, dev_obj)
+                                    dev_iface = dev.get_interface("org.bluez.Device1")
+                                    dev_props = dev.get_interface("org.freedesktop.DBus.Properties")
+                                    await dev_iface.call_connect()
+                                    print("Connected to device")
+                                else:
+                                    raise e
+                            except Exception as inner:
+                                raise inner
+                        else:
+                            raise e
 
                 # Wait for services resolved
                 try:
