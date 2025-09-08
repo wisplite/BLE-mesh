@@ -31,3 +31,9 @@ pip install dbus-fast
 Then you can run the examples with:
 
 python3 -m examples.demo_name
+
+Current demos:
+
+- demo_client.py: Super simple demo of sending messages over the mesh.
+- socketio_transport.py: Translates messages over the mesh to socket.io messages for connecting to other applications, see [BLE-mesh-chat](https://github.com/wisplite/BLE-mesh-chat) for an example of how you can use this to build a chat application. This demo also requires python-socketio to be installed.
+- file_transfer.py: Demonstrates sending a file over the mesh. NOTE: This is INCREDIBLY slow, as BLE GATT is not designed for high-bandwidth data transfer. A 1mb file takes ~20mins to send. This is just meant to be a proof of concept, future versions of this protocol will route Bluetooth Classic connections for high-bandwidth data transfer.
